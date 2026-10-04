@@ -1,0 +1,102 @@
+services:
+  hermes-agent:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-agent
+    command: ["gateway", "run"]
+    restart: unless-stopped
+
+    environment:
+      HERMES_HOME: /home/hermes/.hermes
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+
+      # Gateway / OpenAI-compatible API
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_KEY: ${API_SERVER_KEY}
+
+      # Optional provider credentials
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+
+    volumes:
+      # Persist profiles, sessions, skills, memories, config and credentials
+      - hermes-home:/home/hermes/.hermes
+
+      # Shared working directory for files produced/consumed by agents
+      - ./workspace:/workspace
+
+      # Optional bookkeeping/OCR working area
+      - ./buchhaltung:/buchhaltung
+
+    ports:
+      # Keep host exposure local; publish through your reverse proxy if needed.
+      - "127.0.0.1:8642:8642"
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:8642/health', timeout=5).read()\nPY"
+        ]
+      interval: 15s
+      timeout: 7s
+      retries: 8
+      start_period: 45s
+
+    networks:
+      - hermes-net
+
+  hermes-webui:
+    image: ghcr.io/nesquena/hermes-webui:latest
+    container_name: hermes-webui
+    restart: unless-stopped
+
+    depends_on:
+      hermes-agent:
+        condition: service_healthy
+
+    environment:
+      HERMES_WEBUI_HOST: 0.0.0.0
+      HERMES_WEBUI_PORT: 8787
+
+      # Shared Hermes state
+      HERMES_WEBUI_STATE_DIR: /home/hermeswebui/.hermes/webui
+
+      # Connect WebUI to the Agent over Docker networking
+      HERMES_API_URL: http://hermes-agent:8642
+      HERMES_WEBUI_GATEWAY_API_KEY: ${API_SERVER_KEY}
+
+      # Set this in .env. Required before exposing the WebUI remotely.
+      HERMES_WEBUI_PASSWORD: ${HERMES_WEBUI_PASSWORD}
+
+      WANTED_UID: ${HERMES_UID:-1000}
+      WANTED_GID: ${HERMES_GID:-1000}
+
+    volumes:
+      # Same persistent Hermes state as the agent
+      - hermes-home:/home/hermeswebui/.hermes
+
+      # User-editable workspace
+      - ./workspace:/workspace
+
+      # Bookkeeping/OCR area
+      - ./buchhaltung:/buchhaltung
+
+    ports:
+      # Access locally or put Nginx/Caddy/Traefik in front of this port.
+      - "127.0.0.1:8787:8787"
+
+    networks:
+      - hermes-net
+
+networks:
+  hermes-net:
+    driver: bridge
+
+volumes:
+  hermes-home:
